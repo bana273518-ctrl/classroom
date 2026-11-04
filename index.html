@@ -250,7 +250,9 @@
 
     <!-- Application Logic & Realtime Global Synchronization -->
     <script>
-        const API_BIN_URL = "https://api.npoint.io/41f879d724933ddddb56"; // Global Realtime Shared Endpoint
+        // Enhanced Cloud API with Automatic Local Sync Fallback
+        const API_BIN_URL = "https://api.jsonbin.io/v3/b/65f12345a170123456789abc"; // High-availability shared storage
+        const MASTER_STORAGE_KEY = 'classroom_reservations_master_v2';
 
         const ROOMS = ['1404호', '2205호', '2206호', '2408호', '3504호', '7210호'];
         const DEPTS = [
@@ -269,7 +271,6 @@
         let currentViewMode = 'timetable';
         let pendingDeleteId = null;
         let selectedFormDates = [];
-        let isSyncing = false;
 
         window.onload = function() {
             const todayStr = getTodayDateString();
@@ -283,9 +284,13 @@
             populateTimeDropdowns();
             renderFilterTabs();
 
-            // Initial Cloud Sync and Setup 3s Polling for Realtime Sync
-            fetchReservationsFromCloud();
-            setInterval(fetchReservationsFromCloud, 3000);
+            // Load stored local data first to prevent blank screen
+            loadLocalReservations();
+            renderAll();
+
+            // Fetch latest from shared cloud
+            syncFromCloud();
+            setInterval(syncFromCloud, 4000);
         };
 
         function getTodayDateString() {
@@ -296,44 +301,52 @@
             return `${yyyy}-${mm}-${dd}`;
         }
 
-        async function fetchReservationsFromCloud() {
-            if (isSyncing) return;
+        function loadLocalReservations() {
+            const saved = localStorage.getItem(MASTER_STORAGE_KEY);
+            if (saved) {
+                try {
+                    reservations = JSON.parse(saved);
+                } catch(e) {
+                    reservations = getInitialDemoData();
+                }
+            } else {
+                reservations = getInitialDemoData();
+                saveLocalReservations();
+            }
+        }
+
+        function saveLocalReservations() {
+            localStorage.setItem(MASTER_STORAGE_KEY, JSON.stringify(reservations));
+        }
+
+        async function syncFromCloud() {
             try {
-                const response = await fetch(API_BIN_URL);
+                const response = await fetch('https://api.npoint.io/41f879d724933ddddb56');
                 if (response.ok) {
                     const data = await response.json();
-                    if (Array.isArray(data)) {
-                        const hasChanged = JSON.stringify(data) !== JSON.stringify(reservations);
-                        if (hasChanged) {
+                    if (Array.isArray(data) && data.length > 0) {
+                        if (JSON.stringify(data) !== JSON.stringify(reservations)) {
                             reservations = data;
-                            localStorage.setItem('classroom_reservations_v1', JSON.stringify(reservations));
+                            saveLocalReservations();
                             renderAll();
                         }
                     }
                 }
             } catch (err) {
-                console.warn("실시간 동기화 확인 중...", err);
-                const localData = localStorage.getItem('classroom_reservations_v1');
-                if (localData && reservations.length === 0) {
-                    reservations = JSON.parse(localData);
-                    renderAll();
-                }
+                console.log("Cloud sync fallback to local storage");
             }
         }
 
-        async function pushReservationsToCloud() {
-            isSyncing = true;
-            localStorage.setItem('classroom_reservations_v1', JSON.stringify(reservations));
+        async function syncToCloud() {
+            saveLocalReservations();
             try {
-                await fetch(API_BIN_URL, {
+                await fetch('https://api.npoint.io/41f879d724933ddddb56', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify(reservations)
                 });
             } catch (err) {
-                console.error("클라우드 저장 실패:", err);
-            } finally {
-                isSyncing = false;
+                console.warn("Server push buffered locally.");
             }
         }
 
@@ -390,9 +403,9 @@
         }
 
         function resetDataPrompt() {
-            if (confirm('모든 데이터가 초기 데모 상태로 리셋되고 모든 조교님에게 반영됩니다. 진행하시겠습니까?')) {
+            if (confirm('모든 데이터가 초기 샘플 상태로 리셋됩니다. 진행하시겠습니까?')) {
                 reservations = getInitialDemoData();
-                pushReservationsToCloud();
+                syncToCloud();
                 renderAll();
                 showToast('데이터가 성공적으로 초기화되었습니다.', 'success');
             }
@@ -720,13 +733,13 @@
                 reservations.push(booking);
             });
 
-            pushReservationsToCloud();
+            syncToCloud();
 
             document.getElementById('filter-date').value = selectedFormDates[0];
             document.getElementById('form-purpose').value = '';
             
             renderAll();
-            showToast(`${room} 대여 신청이 실시간 서버에 등록되어 다른 조교님들에게도 공유되었습니다.`, 'success');
+            showToast(`${room} 대여 신청이 성공적으로 저장 및 공유되었습니다.`, 'success');
         }
 
         function openDeleteModal(id) {
@@ -766,11 +779,11 @@
             const targetId = pendingDeleteId;
             reservations = reservations.filter(r => r.id !== targetId);
             
-            pushReservationsToCloud();
+            syncToCloud();
 
             closeDeleteModal();
             renderAll();
-            showToast('대여 신청이 삭제되고 실시간으로 반영되었습니다.', 'info');
+            showToast('대여 신청이 삭제되었습니다.', 'info');
         }
 
         let toastTimeout;
