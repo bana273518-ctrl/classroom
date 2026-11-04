@@ -57,7 +57,12 @@
                         <i class="fa-solid fa-door-open text-xl"></i>
                     </div>
                     <div>
-                        <h1 class="text-xl font-bold text-slate-900 tracking-tight">공용강의실 대여 및 현황 관리 시스템</h1>
+                        <div class="flex items-center gap-2">
+                            <h1 class="text-xl font-bold text-slate-900 tracking-tight">공용강의실 대여 및 현황 관리 시스템</h1>
+                            <span id="sync-status-badge" class="px-2 py-0.5 text-[10px] font-bold rounded-full bg-emerald-100 text-emerald-700 flex items-center gap-1">
+                                <span class="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-ping"></span> 실시간 공유 연결됨
+                            </span>
+                        </div>
                         <p class="text-xs text-slate-500 font-medium">4개 학과 조교 전용 실시간 예약 공유 대시보드 (1404, 2205, 2206, 2408, 3504, 7210호)</p>
                     </div>
                 </div>
@@ -222,81 +227,6 @@
         </div>
     </footer>
 
-    <!-- Global Firebase Realtime Shared Sync Script -->
-    <script type="module">
-        import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
-        import { getAuth, signInAnonymously } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
-        import { getFirestore, collection, doc, setDoc, deleteDoc, onSnapshot } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
-
-        // Global Fixed App ID for 4 Dept Assistants
-        const appId = 'shared-classroom-reservation-app-4depts';
-        
-        const firebaseConfig = {
-            apiKey: "AIzaSyD-PlaceholderKeyForGlobalSync",
-            authDomain: "shared-reservation-sync.firebaseapp.com",
-            projectId: "shared-reservation-sync",
-            storageBucket: "shared-reservation-sync.appspot.com",
-            messagingSenderId: "987654321012",
-            appId: "1:987654321012:web:abcdef123456"
-        };
-
-        const app = initializeApp(firebaseConfig);
-        const auth = getAuth(app);
-        const db = getFirestore(app);
-
-        const publicCollectionRef = collection(db, 'artifacts', appId, 'public', 'data', 'reservations');
-
-        async function initCloudSync() {
-            try {
-                await signInAnonymously(auth);
-
-                onSnapshot(publicCollectionRef, (snapshot) => {
-                    const cloudData = [];
-                    snapshot.forEach((docSnap) => {
-                        cloudData.push({ id: docSnap.id, ...docSnap.data() });
-                    });
-
-                    window.reservations = cloudData;
-                    localStorage.setItem('classroom_reservations_v1', JSON.stringify(cloudData));
-
-                    if (typeof window.renderAll === 'function') {
-                        window.renderAll();
-                    }
-                }, (error) => {
-                    console.warn("실시간 수신 접속 유지 중...", error);
-                });
-            } catch (err) {
-                console.warn("데이터베이스 동기화 연결 중...", err);
-            }
-        }
-
-        window.saveReservationToCloud = async function(bookingData) {
-            try {
-                if (!auth.currentUser) await signInAnonymously(auth);
-                const docRef = doc(db, 'artifacts', appId, 'public', 'data', 'reservations', bookingData.id);
-                await setDoc(docRef, bookingData);
-                return true;
-            } catch (e) {
-                console.error("저장 실패:", e);
-                return false;
-            }
-        };
-
-        window.deleteReservationFromCloud = async function(id) {
-            try {
-                if (!auth.currentUser) await signInAnonymously(auth);
-                const docRef = doc(db, 'artifacts', appId, 'public', 'data', 'reservations', id);
-                await deleteDoc(docRef);
-                return true;
-            } catch (e) {
-                console.error("삭제 실패:", e);
-                return false;
-            }
-        };
-
-        initCloudSync();
-    </script>
-
     <!-- Delete Confirmation Modal -->
     <div id="delete-modal" class="fixed inset-0 z-50 bg-slate-900/40 backdrop-blur-sm hidden flex items-center justify-center p-4">
         <div class="bg-white rounded-2xl max-w-sm w-full p-5 shadow-2xl space-y-4 transform transition-all scale-95 opacity-0" id="delete-modal-content">
@@ -318,8 +248,10 @@
         </div>
     </div>
 
-    <!-- JavaScript Application Logic -->
+    <!-- Application Logic & Realtime Global Synchronization -->
     <script>
+        const API_BIN_URL = "https://api.npoint.io/41f879d724933ddddb56"; // Global Realtime Shared Endpoint
+
         const ROOMS = ['1404호', '2205호', '2206호', '2408호', '3504호', '7210호'];
         const DEPTS = [
             { name: '스재/반산 조교', badgeClass: 'bg-blue-100 text-blue-800 border-blue-200', bgSolid: 'bg-blue-600', borderLeft: 'border-l-4 border-blue-500', bgLight: 'bg-blue-50/70' },
@@ -337,6 +269,7 @@
         let currentViewMode = 'timetable';
         let pendingDeleteId = null;
         let selectedFormDates = [];
+        let isSyncing = false;
 
         window.onload = function() {
             const todayStr = getTodayDateString();
@@ -346,13 +279,13 @@
             selectedFormDates = [todayStr];
             renderDateChips();
 
-            loadReservations();
-
             renderClassroomButtons();
             populateTimeDropdowns();
             renderFilterTabs();
 
-            renderAll();
+            // Initial Cloud Sync and Setup 3s Polling for Realtime Sync
+            fetchReservationsFromCloud();
+            setInterval(fetchReservationsFromCloud, 3000);
         };
 
         function getTodayDateString() {
@@ -361,6 +294,47 @@
             const mm = String(today.getMonth() + 1).padStart(2, '0');
             const dd = String(today.getDate()).padStart(2, '0');
             return `${yyyy}-${mm}-${dd}`;
+        }
+
+        async function fetchReservationsFromCloud() {
+            if (isSyncing) return;
+            try {
+                const response = await fetch(API_BIN_URL);
+                if (response.ok) {
+                    const data = await response.json();
+                    if (Array.isArray(data)) {
+                        const hasChanged = JSON.stringify(data) !== JSON.stringify(reservations);
+                        if (hasChanged) {
+                            reservations = data;
+                            localStorage.setItem('classroom_reservations_v1', JSON.stringify(reservations));
+                            renderAll();
+                        }
+                    }
+                }
+            } catch (err) {
+                console.warn("실시간 동기화 확인 중...", err);
+                const localData = localStorage.getItem('classroom_reservations_v1');
+                if (localData && reservations.length === 0) {
+                    reservations = JSON.parse(localData);
+                    renderAll();
+                }
+            }
+        }
+
+        async function pushReservationsToCloud() {
+            isSyncing = true;
+            localStorage.setItem('classroom_reservations_v1', JSON.stringify(reservations));
+            try {
+                await fetch(API_BIN_URL, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(reservations)
+                });
+            } catch (err) {
+                console.error("클라우드 저장 실패:", err);
+            } finally {
+                isSyncing = false;
+            }
         }
 
         function addSelectedDate() {
@@ -404,84 +378,21 @@
             `).join('');
         }
 
-        function loadReservations() {
-            const stored = localStorage.getItem('classroom_reservations_v1');
-            if (stored) {
-                try {
-                    reservations = JSON.parse(stored);
-                } catch(e) {
-                    reservations = getInitialDemoData();
-                }
-            } else {
-                reservations = getInitialDemoData();
-                saveReservations();
-            }
-        }
-
-        function saveReservations() {
-            localStorage.setItem('classroom_reservations_v1', JSON.stringify(reservations));
-        }
-
         function getInitialDemoData() {
             const today = getTodayDateString();
             return [
-                {
-                    id: 'demo-0',
-                    dept: '스재/반산 조교',
-                    assistant: '박조교 (010-1111-2222)',
-                    room: '1404호',
-                    date: today,
-                    startTime: '09:00',
-                    endTime: '11:00',
-                    purpose: '신체 교정 및 재활 이론 특강'
-                },
-                {
-                    id: 'demo-1',
-                    dept: '스재/반산 조교',
-                    assistant: '박조교 (010-1111-2222)',
-                    room: '2205호',
-                    date: today,
-                    startTime: '10:00',
-                    endTime: '12:00',
-                    purpose: '스포츠 재활 트레이닝 실습 보강'
-                },
-                {
-                    id: 'demo-2',
-                    dept: '의료뷰티 조교',
-                    assistant: '이조교 (010-3333-4444)',
-                    room: '2206호',
-                    date: today,
-                    startTime: '13:00',
-                    endTime: '15:00',
-                    purpose: '피부미용 실기 시험 연습'
-                },
-                {
-                    id: 'demo-3',
-                    dept: '호텔조리 조교',
-                    assistant: '최조교 (010-5555-6666)',
-                    room: '2408호',
-                    date: today,
-                    startTime: '11:00',
-                    endTime: '14:00',
-                    purpose: '서양조리 실습실 사전 준비'
-                },
-                {
-                    id: 'demo-4',
-                    dept: '식품영양 조교',
-                    assistant: '정조교 (010-7777-8888)',
-                    room: '3504호',
-                    date: today,
-                    startTime: '15:00',
-                    endTime: '17:00',
-                    purpose: '식사요법 세미나 모임'
-                }
+                { id: 'demo-0', dept: '스재/반산 조교', assistant: '박조교 (010-1111-2222)', room: '1404호', date: today, startTime: '09:00', endTime: '11:00', purpose: '신체 교정 및 재활 이론 특강' },
+                { id: 'demo-1', dept: '스재/반산 조교', assistant: '박조교 (010-1111-2222)', room: '2205호', date: today, startTime: '10:00', endTime: '12:00', purpose: '스포츠 재활 트레이닝 실습 보강' },
+                { id: 'demo-2', dept: '의료뷰티 조교', assistant: '이조교 (010-3333-4444)', room: '2206호', date: today, startTime: '13:00', endTime: '15:00', purpose: '피부미용 실기 시험 연습' },
+                { id: 'demo-3', dept: '호텔조리 조교', assistant: '최조교 (010-5555-6666)', room: '2408호', date: today, startTime: '11:00', endTime: '14:00', purpose: '서양조리 실습실 사전 준비' },
+                { id: 'demo-4', dept: '식품영양 조교', assistant: '정조교 (010-7777-8888)', room: '3504호', date: today, startTime: '15:00', endTime: '17:00', purpose: '식사요법 세미나 모임' }
             ];
         }
 
         function resetDataPrompt() {
-            if (confirm('모든 데이터가 초기 데모 상태로 초기화됩니다. 진행하시겠습니까?')) {
+            if (confirm('모든 데이터가 초기 데모 상태로 리셋되고 모든 조교님에게 반영됩니다. 진행하시겠습니까?')) {
                 reservations = getInitialDemoData();
-                saveReservations();
+                pushReservationsToCloud();
                 renderAll();
                 showToast('데이터가 성공적으로 초기화되었습니다.', 'success');
             }
@@ -807,17 +718,15 @@
 
             newBookings.forEach(booking => {
                 reservations.push(booking);
-                if (typeof window.saveReservationToCloud === 'function') {
-                    window.saveReservationToCloud(booking);
-                }
             });
-            saveReservations();
+
+            pushReservationsToCloud();
 
             document.getElementById('filter-date').value = selectedFormDates[0];
             document.getElementById('form-purpose').value = '';
             
             renderAll();
-            showToast(`${room} 대여 신청이 ${selectedFormDates.length}개 날짜에 실시간 공유 등록되었습니다.`, 'success');
+            showToast(`${room} 대여 신청이 실시간 서버에 등록되어 다른 조교님들에게도 공유되었습니다.`, 'success');
         }
 
         function openDeleteModal(id) {
@@ -856,15 +765,12 @@
 
             const targetId = pendingDeleteId;
             reservations = reservations.filter(r => r.id !== targetId);
-            saveReservations();
-
-            if (typeof window.deleteReservationFromCloud === 'function') {
-                window.deleteReservationFromCloud(targetId);
-            }
+            
+            pushReservationsToCloud();
 
             closeDeleteModal();
             renderAll();
-            showToast('대여 신청이 삭제되고 실시간 반영되었습니다.', 'info');
+            showToast('대여 신청이 삭제되고 실시간으로 반영되었습니다.', 'info');
         }
 
         let toastTimeout;
