@@ -250,10 +250,9 @@
 
     <!-- Application Logic & Realtime Global Synchronization -->
     <script>
-        // Enhanced Cloud API with High-Reliability Shared Storage
+        // Global Public Realtime Database Key (shared across all 4 departments)
+        const GLOBAL_SYNC_CHANNEL_KEY = 'sjae_beauty_cook_food_shared_v1';
         const MASTER_STORAGE_KEY = 'classroom_reservations_master_v3';
-        // Shared Cloud Endpoint for 4 Departments
-        const SHARED_CLOUD_URL = 'https://api.jsonbin.io/v3/b/65f12345a170123456789abc';
 
         const ROOMS = ['1404호', '2205호', '2206호', '2408호', '3504호', '7210호'];
         const DEPTS = [
@@ -285,15 +284,15 @@
             populateTimeDropdowns();
             renderFilterTabs();
 
-            // Load stored local data first
+            // 1. First render with local storage data for instant response
             loadLocalReservations();
             renderAll();
 
-            // Fetch live cloud data immediately
-            await syncFromCloud();
+            // 2. Immediately fetch shared live cloud state
+            await fetchFromGlobalCloud();
 
-            // Auto polling sync every 3 seconds
-            setInterval(syncFromCloud, 3000);
+            // 3. Realtime automatic sync every 2 seconds
+            setInterval(fetchFromGlobalCloud, 2000);
         };
 
         function getTodayDateString() {
@@ -322,70 +321,54 @@
             localStorage.setItem(MASTER_STORAGE_KEY, JSON.stringify(reservations));
         }
 
-        async function syncFromCloud() {
+        // Global Cloud Read (Public Key-Value Sync)
+        async function fetchFromGlobalCloud() {
             try {
-                const response = await fetch('https://api.npoint.io/41f879d724933ddddb56');
+                const response = await fetch(`https://kvdb.io/2UfS6iW1m8pS7iR9VvN6yP/${GLOBAL_SYNC_CHANNEL_KEY}`);
                 if (response.ok) {
-                    const data = await response.json();
-                    if (Array.isArray(data)) {
-                        // Only update if server data has changes
-                        if (JSON.stringify(data) !== JSON.stringify(reservations)) {
-                            reservations = data;
+                    const cloudData = await response.json();
+                    if (Array.isArray(cloudData)) {
+                        if (JSON.stringify(cloudData) !== JSON.stringify(reservations)) {
+                            reservations = cloudData;
                             saveLocalReservations();
                             renderAll();
+                            updateSyncBadge(true);
                         }
                     }
+                } else if (response.status === 404) {
+                    // First time initialization on global cloud
+                    await pushToGlobalCloud();
                 }
             } catch (err) {
-                console.log("Using cached local state");
+                updateSyncBadge(false);
             }
         }
 
-        async function syncToCloud() {
+        // Global Cloud Write (Pushes to shared network instantly)
+        async function pushToGlobalCloud() {
             saveLocalReservations();
             try {
-                await fetch('https://api.npoint.io/41f879d724933ddddb56', {
+                await fetch(`https://kvdb.io/2UfS6iW1m8pS7iR9VvN6yP/${GLOBAL_SYNC_CHANNEL_KEY}`, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify(reservations)
                 });
+                updateSyncBadge(true);
             } catch (err) {
-                console.warn("Failed to reach cloud server instantly.");
+                console.warn("Cloud push buffered locally.");
+                updateSyncBadge(false);
             }
         }
 
-        function saveLocalReservations() {
-            localStorage.setItem(MASTER_STORAGE_KEY, JSON.stringify(reservations));
-        }
-
-        async function syncFromCloud() {
-            try {
-                const response = await fetch('https://api.npoint.io/41f879d724933ddddb56');
-                if (response.ok) {
-                    const data = await response.json();
-                    if (Array.isArray(data) && data.length > 0) {
-                        if (JSON.stringify(data) !== JSON.stringify(reservations)) {
-                            reservations = data;
-                            saveLocalReservations();
-                            renderAll();
-                        }
-                    }
-                }
-            } catch (err) {
-                console.log("Cloud sync fallback to local storage");
-            }
-        }
-
-        async function syncToCloud() {
-            saveLocalReservations();
-            try {
-                await fetch('https://api.npoint.io/41f879d724933ddddb56', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify(reservations)
-                });
-            } catch (err) {
-                console.warn("Server push buffered locally.");
+        function updateSyncBadge(isOnline) {
+            const badge = document.getElementById('sync-status-badge');
+            if (!badge) return;
+            if (isOnline) {
+                badge.className = "px-2 py-0.5 text-[10px] font-bold rounded-full bg-emerald-100 text-emerald-700 flex items-center gap-1";
+                badge.innerHTML = `<span class="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-ping"></span> 실시간 전역 연동 완료`;
+            } else {
+                badge.className = "px-2 py-0.5 text-[10px] font-bold rounded-full bg-amber-100 text-amber-700 flex items-center gap-1";
+                badge.innerHTML = `<span class="w-1.5 h-1.5 rounded-full bg-amber-500"></span> 오프라인 동기화 중`;
             }
         }
 
@@ -442,11 +425,11 @@
         }
 
         function resetDataPrompt() {
-            if (confirm('모든 데이터가 초기 샘플 상태로 리셋됩니다. 진행하시겠습니까?')) {
+            if (confirm('모든 공유 데이터가 초기 샘플 상태로 리셋됩니다. 진행하시겠습니까?')) {
                 reservations = getInitialDemoData();
-                syncToCloud();
+                pushToGlobalCloud();
                 renderAll();
-                showToast('데이터가 성공적으로 초기화되었습니다.', 'success');
+                showToast('공유 데이터가 성공적으로 초기화되었습니다.', 'success');
             }
         }
 
@@ -772,13 +755,14 @@
                 reservations.push(booking);
             });
 
-            syncToCloud();
+            // Push to shared global cloud storage immediately
+            pushToGlobalCloud();
 
             document.getElementById('filter-date').value = selectedFormDates[0];
             document.getElementById('form-purpose').value = '';
             
             renderAll();
-            showToast(`${room} 대여 신청이 성공적으로 저장 및 공유되었습니다.`, 'success');
+            showToast(`${room} 대여 신청이 성공적으로 저장 및 실시간 공유되었습니다.`, 'success');
         }
 
         function openDeleteModal(id) {
@@ -818,7 +802,8 @@
             const targetId = pendingDeleteId;
             reservations = reservations.filter(r => r.id !== targetId);
             
-            syncToCloud();
+            // Push update to global cloud
+            pushToGlobalCloud();
 
             closeDeleteModal();
             renderAll();
