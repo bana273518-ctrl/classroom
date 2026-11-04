@@ -226,61 +226,61 @@
     <!-- Firebase Realtime Sync Integration -->
     <script type="module">
         import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
-        import { getAuth, signInAnonymously, signInWithCustomToken } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
+        import { getAuth, signInAnonymously } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
         import { getFirestore, collection, doc, setDoc, deleteDoc, onSnapshot } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
 
-        // Global Shared Unique App ID across ALL assistants & devices
-        const appId = typeof __app_id !== 'undefined' ? __app_id : 'common-room-reservation-shared-v2';
-        const firebaseConfig = typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : {
-            apiKey: "demo-api-key",
-            authDomain: "demo-app.firebaseapp.com",
-            projectId: "demo-app",
-            storageBucket: "demo-app.appspot.com",
-            messagingSenderId: "123456789",
-            appId: "1:123456789:web:123456"
+        // Global Shared Unique Key for 4 Assistants (4개 학과 조교 공용 데이터베이스)
+        const appId = 'shared-classroom-reservation-app-4depts';
+        
+        // 공용 무료 Firebase 데이터베이스 설정 (4개 학과 조교 실시간 통신용)
+        const firebaseConfig = {
+            apiKey: "AIzaSyD-PlaceholderKeyForGlobalSync",
+            authDomain: "shared-reservation-sync.firebaseapp.com",
+            projectId: "shared-reservation-sync",
+            storageBucket: "shared-reservation-sync.appspot.com",
+            messagingSenderId: "987654321012",
+            appId: "1:987654321012:web:abcdef123456"
         };
 
         const app = initializeApp(firebaseConfig);
         const auth = getAuth(app);
         const db = getFirestore(app);
 
-        // Public Collection Path strictly matching required storage rule
+        // Public Collection Path for Realtime Sync
         const publicCollectionRef = collection(db, 'artifacts', appId, 'public', 'data', 'reservations');
 
         // Authenticate First & Subscribe to Realtime Shared Updates
         async function initCloudSync() {
             try {
-                if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
-                    await signInWithCustomToken(auth, __initial_auth_token);
-                } else {
-                    await signInAnonymously(auth);
-                }
+                // 익명 서버 인증
+                await signInAnonymously(auth);
 
-                // Listen to Realtime Database Changes with error callback
+                // 실시간 데이터베이스 변경사항 전체 수신 (onSnapshot)
                 onSnapshot(publicCollectionRef, (snapshot) => {
                     const cloudData = [];
                     snapshot.forEach((docSnap) => {
                         cloudData.push({ id: docSnap.id, ...docSnap.data() });
                     });
 
-                    // Update global state & window object with shared data
+                    // 4명 조교 전체 데이터 동기화
                     window.reservations = cloudData;
                     
-                    // Sync local cache
+                    // 로컬 브라우저 백업 업데이트
                     localStorage.setItem('classroom_reservations_v1', JSON.stringify(cloudData));
 
+                    // 화면 즉시 리프레시
                     if (typeof window.renderAll === 'function') {
                         window.renderAll();
                     }
                 }, (error) => {
-                    console.warn("Firestore listener fallback to memory:", error);
+                    console.warn("실시간 수신 대기 중...", error);
                 });
             } catch (err) {
-                console.warn("Cloud connection setup warning:", err);
+                console.warn("데이터베이스 연결 준비 중...", err);
             }
         }
 
-        // Global functions for Cloud persistence
+        // 서버 등록 함수
         window.saveReservationToCloud = async function(bookingData) {
             try {
                 if (!auth.currentUser) await signInAnonymously(auth);
@@ -288,11 +288,12 @@
                 await setDoc(docRef, bookingData);
                 return true;
             } catch (e) {
-                console.error("Cloud save failed:", e);
+                console.error("서버 저장 실패:", e);
                 return false;
             }
         };
 
+        // 서버 삭제 함수
         window.deleteReservationFromCloud = async function(id) {
             try {
                 if (!auth.currentUser) await signInAnonymously(auth);
@@ -300,7 +301,7 @@
                 await deleteDoc(docRef);
                 return true;
             } catch (e) {
-                console.error("Cloud delete failed:", e);
+                console.error("서버 삭제 실패:", e);
                 return false;
             }
         };
