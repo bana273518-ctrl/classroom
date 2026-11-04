@@ -50,7 +50,7 @@
 
     <!-- Header -->
     <header class="bg-white border-b border-slate-200 sticky top-0 z-30 shadow-sm">
-        <div class="max-w-7xl mx-mx-auto px-4 sm:px-6 lg:px-8 py-3.5">
+        <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-3.5">
             <div class="flex flex-col md:flex-row md:items-center md:justify-between gap-3">
                 <div class="flex items-center space-x-3">
                     <div class="bg-indigo-600 text-white p-2.5 rounded-xl shadow-md shadow-indigo-200">
@@ -87,9 +87,8 @@
     <main class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6 flex-1 w-full space-y-6">
 
         <!-- Today Summary Statistics -->
-        <section class="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3">
-            <!-- Filled dynamically by JavaScript -->
-            <div id="room-summary-container" class="col-span-full grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3"></div>
+        <section class="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
+            <div id="room-summary-container" class="col-span-full grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3"></div>
         </section>
 
         <!-- Main Workspace (Reservation Form + Timetable/List) -->
@@ -223,16 +222,15 @@
         </div>
     </footer>
 
-    <!-- Firebase Realtime Sync Integration -->
+    <!-- Global Firebase Realtime Shared Sync Script -->
     <script type="module">
         import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
         import { getAuth, signInAnonymously } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
         import { getFirestore, collection, doc, setDoc, deleteDoc, onSnapshot } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
 
-        // Global Shared Unique Key for 4 Assistants (4개 학과 조교 공용 데이터베이스)
+        // Global Fixed App ID for 4 Dept Assistants
         const appId = 'shared-classroom-reservation-app-4depts';
         
-        // 공용 무료 Firebase 데이터베이스 설정 (4개 학과 조교 실시간 통신용)
         const firebaseConfig = {
             apiKey: "AIzaSyD-PlaceholderKeyForGlobalSync",
             authDomain: "shared-reservation-sync.firebaseapp.com",
@@ -246,41 +244,32 @@
         const auth = getAuth(app);
         const db = getFirestore(app);
 
-        // Public Collection Path for Realtime Sync
         const publicCollectionRef = collection(db, 'artifacts', appId, 'public', 'data', 'reservations');
 
-        // Authenticate First & Subscribe to Realtime Shared Updates
         async function initCloudSync() {
             try {
-                // 익명 서버 인증
                 await signInAnonymously(auth);
 
-                // 실시간 데이터베이스 변경사항 전체 수신 (onSnapshot)
                 onSnapshot(publicCollectionRef, (snapshot) => {
                     const cloudData = [];
                     snapshot.forEach((docSnap) => {
                         cloudData.push({ id: docSnap.id, ...docSnap.data() });
                     });
 
-                    // 4명 조교 전체 데이터 동기화
                     window.reservations = cloudData;
-                    
-                    // 로컬 브라우저 백업 업데이트
                     localStorage.setItem('classroom_reservations_v1', JSON.stringify(cloudData));
 
-                    // 화면 즉시 리프레시
                     if (typeof window.renderAll === 'function') {
                         window.renderAll();
                     }
                 }, (error) => {
-                    console.warn("실시간 수신 대기 중...", error);
+                    console.warn("실시간 수신 접속 유지 중...", error);
                 });
             } catch (err) {
-                console.warn("데이터베이스 연결 준비 중...", err);
+                console.warn("데이터베이스 동기화 연결 중...", err);
             }
         }
 
-        // 서버 등록 함수
         window.saveReservationToCloud = async function(bookingData) {
             try {
                 if (!auth.currentUser) await signInAnonymously(auth);
@@ -288,12 +277,11 @@
                 await setDoc(docRef, bookingData);
                 return true;
             } catch (e) {
-                console.error("서버 저장 실패:", e);
+                console.error("저장 실패:", e);
                 return false;
             }
         };
 
-        // 서버 삭제 함수
         window.deleteReservationFromCloud = async function(id) {
             try {
                 if (!auth.currentUser) await signInAnonymously(auth);
@@ -301,7 +289,7 @@
                 await deleteDoc(docRef);
                 return true;
             } catch (e) {
-                console.error("서버 삭제 실패:", e);
+                console.error("삭제 실패:", e);
                 return false;
             }
         };
@@ -332,7 +320,6 @@
 
     <!-- JavaScript Application Logic -->
     <script>
-        // CONFIG & CONSTANTS
         const ROOMS = ['1404호', '2205호', '2206호', '2408호', '3504호', '7210호'];
         const DEPTS = [
             { name: '스재/반산 조교', badgeClass: 'bg-blue-100 text-blue-800 border-blue-200', bgSolid: 'bg-blue-600', borderLeft: 'border-l-4 border-blue-500', bgLight: 'bg-blue-50/70' },
@@ -345,33 +332,26 @@
             '09:00', '10:00', '11:00', '12:00', '13:00', '14:00', '15:00', '16:00', '17:00', '18:00', '19:00', '20:00', '21:00'
         ];
 
-        // STATE
         let reservations = [];
-        let selectedFilterRoom = 'ALL'; // 'ALL' or Room Name
-        let currentViewMode = 'timetable'; // 'timetable' or 'card'
+        let selectedFilterRoom = 'ALL';
+        let currentViewMode = 'timetable';
         let pendingDeleteId = null;
-        let selectedFormDates = []; // Multi-date selection state array
+        let selectedFormDates = [];
 
-        // INITIALIZATION
         window.onload = function() {
-            // Set today in Date Pickers
             const todayStr = getTodayDateString();
             document.getElementById('date-picker-input').value = todayStr;
             document.getElementById('filter-date').value = todayStr;
 
-            // Add today as initial selected date
             selectedFormDates = [todayStr];
             renderDateChips();
 
-            // Load LocalStorage or Sample Data
             loadReservations();
 
-            // Setup Form Elements
             renderClassroomButtons();
             populateTimeDropdowns();
             renderFilterTabs();
 
-            // Initial Render
             renderAll();
         };
 
@@ -383,7 +363,6 @@
             return `${yyyy}-${mm}-${dd}`;
         }
 
-        // MULTI-DATE PICKER FUNCTIONS
         function addSelectedDate() {
             const dateInput = document.getElementById('date-picker-input');
             const dateVal = dateInput.value;
@@ -425,7 +404,6 @@
             `).join('');
         }
 
-        // LOCAL STORAGE & INITIAL DEMO DATA
         function loadReservations() {
             const stored = localStorage.getItem('classroom_reservations_v1');
             if (stored) {
@@ -509,7 +487,6 @@
             }
         }
 
-        // RENDER HELPERS
         function getDeptConfig(deptName) {
             return DEPTS.find(d => d.name === deptName) || {
                 name: deptName,
@@ -522,13 +499,12 @@
 
         function renderClassroomButtons() {
             const container = document.getElementById('classroom-selector-buttons');
-            container.innerHTML = ROOMS.map((room, idx) => `
+            container.innerHTML = ROOMS.map((room) => `
                 <button type="button" onclick="selectFormRoom('${room}')" id="room-btn-${room}"
                     class="room-btn py-2 text-xs font-bold rounded-xl border border-slate-200 bg-slate-50 text-slate-600 hover:bg-slate-100 transition-all text-center">
                     ${room}
                 </button>
             `).join('');
-            // Select first room by default
             selectFormRoom(ROOMS[0]);
         }
 
@@ -555,7 +531,6 @@
             startSelect.innerHTML = startOptions;
             endSelect.innerHTML = endOptions;
 
-            // Default selection: 09:00 to 10:00
             startSelect.value = '09:00';
             endSelect.value = '10:00';
 
@@ -609,7 +584,6 @@
             renderMainDisplay();
         }
 
-        // MAIN RENDER ENGINE
         function renderAll() {
             renderSummaryCards();
             renderMainDisplay();
@@ -642,7 +616,6 @@
             const container = document.getElementById('display-container');
             const selectedDate = document.getElementById('filter-date').value;
 
-            // Filter reservations based on date and room filter
             let filtered = reservations.filter(r => r.date === selectedDate);
             if (selectedFilterRoom !== 'ALL') {
                 filtered = filtered.filter(r => r.room === selectedFilterRoom);
@@ -655,10 +628,9 @@
             }
         }
 
-        // TIMETABLE VIEW RENDER
         function renderTimetable(container, filtered, selectedDate) {
             const activeRooms = selectedFilterRoom === 'ALL' ? ROOMS : [selectedFilterRoom];
-            const displayHours = TIME_SLOTS.slice(0, -1); // 09:00 ~ 20:00
+            const displayHours = TIME_SLOTS.slice(0, -1);
 
             let html = `
                 <div class="overflow-x-auto custom-scrollbar">
@@ -677,13 +649,10 @@
             `;
 
             displayHours.forEach(hour => {
-                const nextHour = TIME_SLOTS[TIME_SLOTS.indexOf(hour) + 1];
-
                 html += `<tr>`;
                 html += `<td class="p-2.5 font-semibold text-slate-400 text-center bg-slate-50/30 sticky left-0 border-r border-slate-100">${hour}</td>`;
 
                 activeRooms.forEach(room => {
-                    // Check if there are bookings covering this hour
                     const matchingBooking = filtered.find(r => {
                         if (r.room !== room) return false;
                         return (r.startTime <= hour && r.endTime > hour);
@@ -734,7 +703,6 @@
             container.innerHTML = html;
         }
 
-        // CARD GRID VIEW RENDER
         function renderCardGrid(container, filtered, selectedDate) {
             if (filtered.length === 0) {
                 container.innerHTML = `
@@ -749,7 +717,6 @@
                 return;
             }
 
-            // Sort by start time then room
             filtered.sort((a, b) => a.startTime.localeCompare(b.startTime) || a.room.localeCompare(b.room));
 
             container.innerHTML = `
@@ -790,7 +757,6 @@
             `;
         }
 
-        // RESERVATION FORM SUBMISSION & VALIDATION
         function handleReservationSubmit(e) {
             e.preventDefault();
 
@@ -806,13 +772,11 @@
                 return;
             }
 
-            // Time Validation
             if (startTime >= endTime) {
                 showToast('종료 시간은 시작 시간보다 나중이어야 합니다.', 'error');
                 return;
             }
 
-            // Conflict Check across ALL selected dates
             const conflicts = [];
             selectedFormDates.forEach(date => {
                 const conflict = reservations.find(r => {
@@ -830,7 +794,6 @@
                 return;
             }
 
-            // Create New Reservations for ALL selected dates
             const newBookings = selectedFormDates.map(date => ({
                 id: 'res-' + Date.now() + '-' + Math.random().toString(36).substr(2, 6),
                 dept,
@@ -842,7 +805,6 @@
                 purpose
             }));
 
-            // Save to Local + Sync to Cloud Realtime DB
             newBookings.forEach(booking => {
                 reservations.push(booking);
                 if (typeof window.saveReservationToCloud === 'function') {
@@ -851,17 +813,13 @@
             });
             saveReservations();
 
-            // Sync Filter Date to the earliest newly booked date
             document.getElementById('filter-date').value = selectedFormDates[0];
-
-            // Reset Form (keeping dept for convenience)
             document.getElementById('form-purpose').value = '';
             
             renderAll();
             showToast(`${room} 대여 신청이 ${selectedFormDates.length}개 날짜에 실시간 공유 등록되었습니다.`, 'success');
         }
 
-        // DELETE MODAL LOGIC
         function openDeleteModal(id) {
             const target = reservations.find(r => r.id === id);
             if (!target) return;
@@ -909,7 +867,6 @@
             showToast('대여 신청이 삭제되고 실시간 반영되었습니다.', 'info');
         }
 
-        // TOAST NOTIFICATIONS
         let toastTimeout;
         function showToast(msg, type = 'info') {
             clearTimeout(toastTimeout);
